@@ -1,12 +1,16 @@
+import ipaddress
 from pathlib import Path
 from pydantic_settings import BaseSettings
 from pydantic import field_validator, model_validator
 from typing import List, Literal, Optional
 from urllib.parse import urlsplit
 
-# Local dotenv is in this standalone repository root. Railway/Docker use
-# injected environment variables; private dotenv files are not in the image.
-_ENV_FILE = Path(__file__).resolve().parents[2] / ".env"
+# The .env lives at the garageos/ root (next to docker-compose.yml), while host
+# tooling (uvicorn, alembic, seeds) runs from garageos/backend/. Resolve it by
+# absolute path so CWD doesn't matter. In Docker the file is absent and
+# container env vars take precedence — both paths work.
+# config.py -> core -> app -> backend -> garageos
+_ENV_FILE = Path(__file__).resolve().parents[3] / ".env"
 
 
 class Settings(BaseSettings):
@@ -38,6 +42,8 @@ class Settings(BaseSettings):
     # Telegram
     TELEGRAM_BOT_TOKEN: Optional[str] = None
     TELEGRAM_WEBHOOK_URL: Optional[str] = None
+    DEV_AUTH_ENABLED: bool = False
+    TELEGRAM_PHONE_LINKING_ENABLED: bool = False
 
     # Rate limiting (Redis-backed, fixed window). Degrades open if Redis is down.
     RATE_LIMIT_ENABLED: bool = True
@@ -102,6 +108,11 @@ class Settings(BaseSettings):
         if (len(secret.encode("utf-8")) < 32 or len(set(secret)) < 2
                 or secret.lower().startswith(("change", "__change", "replace", "__replace"))):
             raise ValueError("SECRET_KEY must be a generated secret of at least 32 bytes, without a placeholder")
+        if self.DEV_AUTH_ENABLED or self.TELEGRAM_PHONE_LINKING_ENABLED:
+            raise ValueError("Development authentication and phone-based Telegram linking must be disabled in deployments")
+        self._validate_dependency_url("DATABASE_URL", self.DATABASE_URL,
+                                      {"postgres", "postgresql", "postgresql+asyncpg"})
+        self._validate_dependency_url("REDIS_URL", self.REDIS_URL, {"redis", "rediss"})
         origins = self.cors_origins_list
         valid_origins = bool(origins)
         for origin in origins:
@@ -118,6 +129,22 @@ class Settings(BaseSettings):
         if not valid_origins:
             raise ValueError("CORS_ORIGINS must contain explicit HTTPS origins without paths, credentials or wildcards")
         return self
+
+    @staticmethod
+    def _validate_dependency_url(name: str, value: str, schemes: set[str]) -> None:
+        try:
+            parsed = urlsplit(value.strip())
+            hostname = parsed.hostname
+            host = hostname.rstrip(".").lower() if hostname else ""
+            try:
+                address = ipaddress.ip_address(host)
+                local = address.is_loopback or address.is_unspecified
+            except ValueError:
+                local = host == "localhost" or host.endswith(".localhost")
+        except ValueError:
+            hostname, local, parsed = None, False, None
+        if parsed is None or parsed.scheme.lower() not in schemes or not hostname or local:
+            raise ValueError(f"{name} must be an explicit non-local service URL in staging and production")
 
     @property
     def cors_origins_list(self) -> List[str]:
