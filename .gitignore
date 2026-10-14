@@ -1,0 +1,29 @@
+# Private configuration and credentials
+.env
+.env.*
+!.env.example
+*.local.json
+*.pem
+*.key
+*.p12
+*.jks
+*.keystore
+# Runtime output
+.venv/
+.audit-venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage*
+coverage.xml
+htmlcov/
+*.egg-info/
+ci-evidence/
+backups/
+*.sql.gz
+*.log
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db

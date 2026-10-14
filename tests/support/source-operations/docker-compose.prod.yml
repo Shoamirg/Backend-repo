@@ -1,0 +1,6 @@
+# QA image versions only; not a Railway deployment stack.
+services:
+  postgres:
+    image: postgres:16-alpine
+  redis:
+    image: redis:7-alpine
