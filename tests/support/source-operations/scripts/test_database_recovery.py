@@ -198,6 +198,9 @@ class ProbeEffectsContractTest(unittest.TestCase):
 
 
 class DatabaseRecoveryTest(unittest.TestCase):
+    # Run this rehearsal through its CLI so it receives an evidence directory;
+    # normal pytest collection must not launch Docker or use a missing OUTPUT.
+    __test__ = False
     dockerfile = ROOT/'docker/Dockerfile.backend.prod'
     backend_path = ROOT/'backend'
     source_root = ROOT

@@ -12,6 +12,9 @@ OUTPUT = None
 
 
 class InvoiceVolumeTest(unittest.TestCase):
+    # This is an isolated Docker rehearsal with an explicit --output contract,
+    # not a unit test to discover during the ordinary backend suite.
+    __test__ = False
     @classmethod
     def setUpClass(cls):
         recovery.OUTPUT = OUTPUT
