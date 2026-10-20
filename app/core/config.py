@@ -38,12 +38,32 @@ class Settings(BaseSettings):
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
     ALGORITHM: str = "HS256"
+    # Mobile customer sessions slide: every refresh extends the idle window,
+    # bounded by an absolute lifetime after which the user signs in again.
+    CUSTOMER_REFRESH_IDLE_DAYS: int = 60
+    CUSTOMER_SESSION_MAX_DAYS: int = 365
 
     # Telegram
     TELEGRAM_BOT_TOKEN: Optional[str] = None
     TELEGRAM_WEBHOOK_URL: Optional[str] = None
     DEV_AUTH_ENABLED: bool = False
     TELEGRAM_PHONE_LINKING_ENABLED: bool = False
+
+    # SMS delivery for mobile sign-up / password-reset codes. "disabled" makes
+    # those endpoints answer 503; "console" logs codes (development/test only);
+    # "eskiz" sends through notify.eskiz.uz. Eskiz moderates message text, so
+    # SMS_CODE_TEMPLATE must match a template approved in the Eskiz cabinet.
+    SMS_PROVIDER: Literal["disabled", "console", "eskiz"] = "disabled"
+    ESKIZ_EMAIL: Optional[str] = None
+    ESKIZ_PASSWORD: Optional[str] = None
+    ESKIZ_SENDER: str = "4546"
+    ESKIZ_BASE_URL: str = "https://notify.eskiz.uz/api"
+    SMS_CODE_TEMPLATE: str = "GarageOS tasdiqlash kodi: {code}"
+    VERIFICATION_CODE_TTL_SECONDS: int = 600
+    VERIFICATION_CODE_MAX_ATTEMPTS: int = 5
+    # Per phone/email: at most this many codes per window (independent of IP).
+    VERIFICATION_SEND_MAX: int = 3
+    VERIFICATION_SEND_WINDOW_SECONDS: int = 900
 
     # Rate limiting (Redis-backed, fixed window). Production fails closed if Redis is down.
     RATE_LIMIT_ENABLED: bool = True
@@ -114,6 +134,12 @@ class Settings(BaseSettings):
             raise ValueError("DEMO_MODE_ENABLED must be false in staging and production")
         if not self.RATE_LIMIT_ENABLED:
             raise ValueError("RATE_LIMIT_ENABLED must be true in staging and production")
+        if self.SMS_PROVIDER == "console":
+            raise ValueError("SMS_PROVIDER=console logs codes and must not be used in staging and production")
+        if self.SMS_PROVIDER == "eskiz" and not (self.ESKIZ_EMAIL and self.ESKIZ_PASSWORD):
+            raise ValueError("SMS_PROVIDER=eskiz requires ESKIZ_EMAIL and ESKIZ_PASSWORD")
+        if "{code}" not in self.SMS_CODE_TEMPLATE:
+            raise ValueError("SMS_CODE_TEMPLATE must contain {code}")
         self._validate_dependency_url("DATABASE_URL", self.DATABASE_URL,
                                       {"postgres", "postgresql", "postgresql+asyncpg"})
         self._validate_dependency_url("REDIS_URL", self.REDIS_URL, {"redis", "rediss"})

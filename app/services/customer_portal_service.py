@@ -257,11 +257,11 @@ class CustomerPortalService:
     # ── billing (plain language, no payer scoring) ──────────────────────────
     async def billing(self) -> BillingResponse:
         summary = await FinancialService(self.uow).customer_summary(self.customer.id)
-        invoices = [self._doc(d) for d in summary["invoices"]]
+        # Drafts are staff work in progress: never shown to or actionable by customers.
+        invoices = [self._doc(d) for d in summary["invoices"] if d["status"] != InvoiceStatus.DRAFT]
         estimates = [
             self._doc(d) for d in summary["estimates"]
-            if d["status"] in (InvoiceStatus.SENT, InvoiceStatus.VIEWED,
-                               InvoiceStatus.DRAFT, InvoiceStatus.APPROVED)
+            if d["status"] in (InvoiceStatus.SENT, InvoiceStatus.VIEWED, InvoiceStatus.APPROVED)
         ]
         receipts = [
             BillingReceipt(id=p["id"], amount=p["amount"], method=p["method"],
@@ -310,6 +310,7 @@ class CustomerPortalService:
             or not inv.is_active
             or inv.customer_id != self.customer.id
             or inv.kind != InvoiceKind.ESTIMATE
+            or inv.status == InvoiceStatus.DRAFT
         ):
             raise NotFoundError("Estimate not found")
         return inv

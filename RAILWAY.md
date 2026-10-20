@@ -61,6 +61,15 @@ Bir nechta origin vergul bilan ajratiladi. Production'da DEBUG va demo o'chirilg
 `0.0.0.0:$PORT`da eshitadi; local Docker uchun default `8000`.
 `WEB_CONCURRENCY=1` boshlang'ich qiymat. Uvicorn termination signalini oladi.
 
+### Mobil ilova: SMS kodlari
+
+Mijoz ro'yxatdan o'tishi va parolni tiklash Eskiz SMS kodi bilan ishlaydi.
+Eskiz akkaunti tayyor bo'lmaguncha `SMS_PROVIDER=disabled` qoldiring — bu
+endpointlar 503 qaytaradi, qolgan API ishlayveradi. Yoqish uchun
+`SMS_PROVIDER=eskiz`, `ESKIZ_EMAIL`, `ESKIZ_PASSWORD` (secret) va Eskiz
+kabinetida tasdiqlangan `SMS_CODE_TEMPLATE` (ichida `{code}`) kiriting.
+`console` provayderi deployda rad etiladi.
+
 ## Tarmoq va qabul
 
 Backend **Networking → Generate Domain** orqali HTTPS manzil oladi. Railway

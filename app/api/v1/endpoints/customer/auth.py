@@ -90,3 +90,51 @@ from app.schemas.customer_account import CustomerPasswordLogin
 @router.post('/login', response_model=TokenResponse, dependencies=[Depends(auth_rate_limit)])
 async def password_login(body: CustomerPasswordLogin, auth: CustomerAuthService = Depends(get_customer_auth_service)):
     return await auth.authenticate_password(str(body.email), body.password)
+
+
+# ── mobile self-service: sign-up and password reset over SMS codes ─────────
+from app.core.config import settings as _settings
+from app.core.rate_limit import rate_limit
+from app.schemas.customer_account import (
+    CodeSent, PasswordResetComplete, PasswordResetStart, SignupComplete, SignupStart,
+)
+from app.services.customer_account_lifecycle import CustomerAccountLifecycle
+
+# Per-IP ceiling sized for carrier NAT; per-phone/email limits live in the service.
+account_rate_limit = rate_limit(limit=30, window=60, scope="customer-account")
+
+
+def _code_sent() -> CodeSent:
+    return CodeSent(expires_in=_settings.VERIFICATION_CODE_TTL_SECONDS)
+
+
+@router.post('/signup/start', status_code=202, response_model=CodeSent,
+             dependencies=[Depends(account_rate_limit)],
+             summary="Send an SMS code to the phone on the matching garage record")
+async def signup_start(body: SignupStart, auth: CustomerAuthService = Depends(get_customer_auth_service)):
+    await CustomerAccountLifecycle(auth.uow).start_signup(str(body.email), body.phone)
+    return _code_sent()
+
+
+@router.post('/signup/complete', status_code=201, response_model=TokenResponse,
+             dependencies=[Depends(account_rate_limit)],
+             summary="Confirm the SMS code, set a password and sign in")
+async def signup_complete(body: SignupComplete, auth: CustomerAuthService = Depends(get_customer_auth_service)):
+    return await CustomerAccountLifecycle(auth.uow).complete_signup(
+        str(body.email), body.phone, body.code, body.password, body.service_center_id)
+
+
+@router.post('/password/reset/start', status_code=202, response_model=CodeSent,
+             dependencies=[Depends(account_rate_limit)],
+             summary="Send a reset code to the phone on the account")
+async def password_reset_start(body: PasswordResetStart, auth: CustomerAuthService = Depends(get_customer_auth_service)):
+    await CustomerAccountLifecycle(auth.uow).start_reset(str(body.email))
+    return _code_sent()
+
+
+@router.post('/password/reset/complete', response_model=LogoutResponse,
+             dependencies=[Depends(account_rate_limit)],
+             summary="Set a new password with the SMS code; signs out every device")
+async def password_reset_complete(body: PasswordResetComplete, auth: CustomerAuthService = Depends(get_customer_auth_service)):
+    await CustomerAccountLifecycle(auth.uow).complete_reset(str(body.email), body.code, body.new_password)
+    return LogoutResponse()

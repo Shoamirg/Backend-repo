@@ -5,6 +5,7 @@ from app.models.user import User
 from app.models.customer import Customer
 from app.models.customer_account import CustomerAccount
 from app.models.auth_session import AuthSession
+from app.models.verification_code import VerificationCode
 from app.models.idempotency_record import IdempotencyRecord
 from app.models.brand import Brand
 from app.models.vehicle_model import VehicleModel
@@ -40,6 +41,7 @@ __all__ = [
     "Customer",
     "CustomerAccount",
     "AuthSession",
+    "VerificationCode",
     "IdempotencyRecord",
     "Brand",
     "VehicleModel",

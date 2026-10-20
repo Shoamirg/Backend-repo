@@ -277,6 +277,8 @@ async def _estimate(session, center, customer, vehicle) -> str:
         line_items=[{"kind": "labor", "description": "Brake job", "quantity": 1,
                      "unit_price": 376.0, "taxable": True}],
     )
+    # Customers only see estimates staff have sent; drafts stay internal.
+    await InvoiceService(uow).send(uuid.UUID(doc["id"]))
     return doc["id"]
 
 

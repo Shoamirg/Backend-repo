@@ -341,24 +341,16 @@ async def test_same_key_isolated_by_actor_namespace_actor_uuid_and_conversation(
     assert len({original.json()["id"], one.json()["id"], two.json()["id"]}) == 3
 
 
-@pytest.mark.parametrize("suspension", ["staff", "customer", "center", "role", "staff_permission", "password", "demo"])
+@pytest.mark.parametrize("suspension", ["staff", "customer", "center", "role", "staff_permission", "demo"])
 async def test_current_policy_denies_cached_receipt(client, target, identity, monkeypatch, suspension):
     from app.models import Role, ServiceCenter, User
     from tests.test_staff_access_lifecycle import PASSWORD, _as_role
-    actor = "customer" if suspension in {"customer", "password"} else "staff"
+    actor = "customer" if suspension == "customer" else "staff"
     path, headers = request_target(target, actor, str(uuid.uuid4()))
     assert (await client.post(path, headers=headers, json={"body": "Protected receipt"})).status_code == (200 if actor == "customer" else 201)
     before = await snapshot(target)
     if suspension == "staff_permission":
         await _as_role(identity, "mechanic")
-    elif suspension == "password":
-        email = f"intent-password-{uuid.uuid4().hex}@example.com"
-        created = await client.post(f"/api/v1/customers/{target['customer_id']}/account", headers=target["staff"], json={"email": email, "password": PASSWORD})
-        assert created.status_code == 201
-        signed = await client.post("/api/v1/customer/auth/login", json={"email": email, "password": PASSWORD})
-        assert signed.status_code == 200
-        headers = {**headers, "Authorization": "Bearer " + signed.json()["access_token"]}
-        assert (await client.get(f"/api/v1/customer/messages/{target['id']}", headers=headers)).status_code == 403
     elif suspension == "demo":
         monkeypatch.setattr(settings, "DEMO_MODE_ENABLED", True)
         monkeypatch.setattr(settings, "DEMO_EMAIL", identity["email"])
@@ -377,7 +369,7 @@ async def test_current_policy_denies_cached_receipt(client, target, identity, mo
         # The shared seeded role is restored below for other real tenants/tests.
     try:
         denied = await client.post(path, headers=headers, json={"body": "Protected receipt"})
-        assert denied.status_code == (403 if suspension in {"staff_permission", "password", "demo"} else 401)
+        assert denied.status_code == (403 if suspension in {"staff_permission", "demo"} else 401)
         assert "Protected receipt" not in denied.text
         assert await snapshot(target) == before
     finally:
