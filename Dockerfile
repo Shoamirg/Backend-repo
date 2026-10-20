@@ -1,4 +1,4 @@
-# Railway service root: /garageos/backend. Migrations run as a pre-deploy command.
+# Railway service root: / (this repository). Migrations run as a pre-deploy command.
 FROM python:3.12-slim
 
 ARG BUILD_SHA=unknown
@@ -26,4 +26,7 @@ EXPOSE 8000
 
 # exec delivers termination signals to Uvicorn; PORT is injected by Railway.
 # Public traffic must enter through Railway's edge, which supplies X-Real-IP.
-CMD ["sh", "-c", "exec uvicorn app.main:app --host 0.0.0.0 --port \"${PORT:-8000}\" --workers \"${WEB_CONCURRENCY:-1}\" --proxy-headers --forwarded-allow-ips '*'"]
+# Uvicorn's proxy rewriting stays off: with --forwarded-allow-ips '*' it takes
+# the LEFTMOST (client-controlled) X-Forwarded-For hop as request.client.
+# Client IP is resolved by app.core.rate_limit.client_ip (TRUST_PROXY_HEADERS).
+CMD ["sh", "-c", "exec uvicorn app.main:app --host 0.0.0.0 --port \"${PORT:-8000}\" --workers \"${WEB_CONCURRENCY:-1}\" --no-proxy-headers"]

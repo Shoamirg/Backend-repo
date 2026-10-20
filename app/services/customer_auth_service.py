@@ -21,6 +21,7 @@ from sqlalchemy import func, select
 
 from app.core.config import settings
 from app.core.security import (
+    burn_password_check,
     decode_token,
     verify_password,
 )
@@ -51,7 +52,10 @@ class CustomerAuthService:
 
     async def authenticate_password(self, email: str, password: str) -> dict:
         account = await self.uow.session.scalar(select(CustomerAccount).where(CustomerAccount.email == email.lower()))
-        if account is None or not account.is_active or len(password.encode('utf-8')) > 72 or not verify_password(password, account.password_hash):
+        if account is None or not account.is_active or len(password.encode('utf-8')) > 72:
+            burn_password_check(password)  # same cost as a real miss
+            raise InvalidCredentials()
+        if not verify_password(password, account.password_hash):
             raise InvalidCredentials()
         try:
             customer = await self._load(str(account.customer_id), lock=True)
