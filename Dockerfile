@@ -8,7 +8,8 @@ ENV PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
     ENVIRONMENT=production \
     DEBUG=false \
-    BUILD_SHA=${BUILD_SHA}
+    BUILD_SHA=${BUILD_SHA} \
+    UPLOAD_DIR=/data/uploads
 
 WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends gcc libpq-dev curl \
@@ -20,7 +21,9 @@ COPY app ./app
 COPY alembic ./alembic
 COPY alembic.ini .
 COPY data/brands.json data/models.json data/maintenance_rules.json ./data/
-RUN useradd -m appuser && chown -R appuser /app
+RUN useradd -m appuser && mkdir -p /data/uploads && chown -R appuser /app /data/uploads
+# Uploaded photos: mount a persistent, backed-up volume here on the server.
+VOLUME ["/data/uploads"]
 USER appuser
 EXPOSE 8000
 

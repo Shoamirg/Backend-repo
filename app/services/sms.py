@@ -9,7 +9,7 @@ One small interface, chosen by ``SMS_PROVIDER``:
 from __future__ import annotations
 
 import logging
-from typing import Optional, Protocol
+from typing import NamedTuple, Optional, Protocol
 
 import httpx
 
@@ -23,6 +23,23 @@ class SmsUnavailable(GarageException):
     status_code = 503
     code = "SMS_UNAVAILABLE"
     detail = "SMS delivery is temporarily unavailable. Please try again later."
+
+
+class OutgoingSms(NamedTuple):
+    phone: str
+    message: str
+
+
+async def deliver_sms(sms: OutgoingSms) -> None:
+    """Background delivery after the HTTP response has been sent.
+
+    Failures are logged, never raised: the client already got the same answer
+    it would get when nothing matched.
+    """
+    try:
+        await get_sms_sender().send(sms.phone, sms.message)
+    except Exception as exc:  # noqa: BLE001
+        logger.error("Verification SMS not delivered (%s)", type(exc).__name__)
 
 
 class SmsSender(Protocol):

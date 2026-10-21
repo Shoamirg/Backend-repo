@@ -10,7 +10,7 @@ from pydantic import ValidationError
 
 from app.core.config import Settings
 
-VALID = dict(ENVIRONMENT="production", DEBUG=False, RATE_LIMIT_ENABLED=True,
+VALID = dict(ENVIRONMENT="production", DEBUG=False, RATE_LIMIT_ENABLED=True, UPLOAD_DIR="/data/uploads",
              SECRET_KEY="c31ab862ba6855e49cf7581a61fe0f736d70a8c835c7ae149a324ced932a82d4",
              DATABASE_URL="postgresql+asyncpg://garage:secret@postgres.railway.internal:5432/garage",
              REDIS_URL="redis://redis.railway.internal:6379/0",
@@ -46,15 +46,6 @@ def test_deployment_defaults_cannot_point_at_local_dependencies():
                  SECRET_KEY=VALID["SECRET_KEY"],
                  CORS_ORIGINS=VALID["CORS_ORIGINS"],
                  DATABASE_URL=VALID["DATABASE_URL"])
-
-
-@pytest.mark.parametrize(("field", "enabled"), [
-    ("DEV_AUTH_ENABLED", True),
-    ("TELEGRAM_PHONE_LINKING_ENABLED", True),
-])
-def test_deployment_disables_insecure_customer_authentication(field, enabled):
-    with pytest.raises(ValidationError, match="authentication|linking"):
-        Settings(_env_file=None, **{**VALID, field: enabled})
 
 
 @pytest.mark.parametrize("secret", [

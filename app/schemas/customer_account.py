@@ -1,4 +1,4 @@
-from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator, model_validator
 
 
 class CustomerAccountCreate(BaseModel):
@@ -18,10 +18,6 @@ class CustomerAccountUpdate(BaseModel):
     is_active: bool
 
 
-class CustomerPasswordLogin(BaseModel):
-    model_config = ConfigDict(extra='forbid')
-    email: EmailStr = Field(max_length=255)
-    password: str = Field(max_length=72, repr=False)
 
 
 # ── mobile self-service ────────────────────────────────────────────────────
@@ -60,14 +56,33 @@ class SignupComplete(_NewPassword):
     service_center_id: Optional[_uuid.UUID] = None
 
 
-class PasswordResetStart(BaseModel):
-    model_config = ConfigDict(extra='forbid')
-    email: EmailStr = Field(max_length=255)
+class _EmailOrPhone(BaseModel):
+    """Identify an account by its email or by the phone on the customer record."""
+    email: Optional[EmailStr] = Field(default=None, max_length=255)
+    phone: Optional[str] = Field(default=None, pattern=r"^\+?[0-9\s\-()]{7,20}$")
+
+    @model_validator(mode='after')
+    def exactly_one(self):
+        if (self.email is None) == (self.phone is None):
+            raise ValueError('Provide either email or phone')
+        return self
+
+    @property
+    def email_str(self) -> Optional[str]:
+        return str(self.email) if self.email is not None else None
 
 
-class PasswordResetComplete(_NewPassword):
+class CustomerPasswordLogin(_EmailOrPhone):
     model_config = ConfigDict(extra='forbid')
-    email: EmailStr = Field(max_length=255)
+    password: str = Field(max_length=72, repr=False)
+
+
+class PasswordResetStart(_EmailOrPhone):
+    model_config = ConfigDict(extra='forbid')
+
+
+class PasswordResetComplete(_EmailOrPhone, _NewPassword):
+    model_config = ConfigDict(extra='forbid')
     code: str = _CODE
     new_password: str = _password_field()
 

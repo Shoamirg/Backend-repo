@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import hashlib
 import hmac
-import re
 import secrets
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -24,16 +23,18 @@ from sqlalchemy import delete, exists, func, select
 from sqlalchemy.exc import IntegrityError
 
 from app.core.config import settings
+from app.core.phone import normalize_phone, phone_matches, phone_variants
 from app.core.rate_limit import enforce_key_limit
-from app.core.security import burn_password_check, hash_password, verify_password
+from app.core.security import hash_password, verify_password
 from app.exceptions import ConflictError, GarageException, InvalidCredentials
 from app.models import AuditLog, Customer, ServiceCenter
 from app.models.customer_account import CustomerAccount
+from app.models.push_device import PushDevice
 from app.models.verification_code import VerificationCode
 from app.repositories.unit_of_work import UnitOfWork
 from app.services.auth_session_service import AuthSessionService
 from app.services.customer_auth_service import CustomerAuthService
-from app.services.sms import get_sms_sender
+from app.services.sms import OutgoingSms, get_sms_sender
 
 SIGNUP, RESET = "signup", "reset"
 
@@ -63,26 +64,6 @@ class GarageSelectionRequired(ConflictError):
         self.garages = garages
 
 
-class PasswordLoginRequired(GarageException):
-    status_code = 400
-    code = "PASSWORD_ACCOUNT_REQUIRED"
-    detail = "This session has no password to change."
-
-
-def normalize_phone(value: str) -> str:
-    """Digits only; a bare 9-digit Uzbek national number gets the 998 prefix."""
-    digits = re.sub(r"\D", "", value or "")
-    return "998" + digits if len(digits) == 9 else digits
-
-
-def _phone_variants(digits: str) -> set[str]:
-    # Garages type numbers both with and without the country code.
-    variants = {digits}
-    if digits.startswith("998") and len(digits) == 12:
-        variants.add(digits[3:])
-    return variants
-
-
 def _code_hash(purpose: str, email: str, phone: str, code: str) -> str:
     message = f"{purpose}:{email}:{phone}:{code}".encode()
     return hmac.new(settings.SECRET_KEY.encode(), message, hashlib.sha256).hexdigest()
@@ -98,7 +79,7 @@ class CustomerAccountLifecycle:
         self.session = uow.session
 
     # ── shared code machinery ───────────────────────────────────────────────
-    async def _send_code(self, purpose: str, email: str, phone: str) -> None:
+    async def _send_code(self, purpose: str, email: str, phone: str) -> OutgoingSms:
         code = f"{secrets.randbelow(10**6):06d}"
         # Supersede older open codes so only the newest SMS works.
         await self.session.execute(VerificationCode.__table__.update().where(
@@ -109,7 +90,9 @@ class CustomerAccountLifecycle:
             code_hash=_code_hash(purpose, email, phone, code),
             expires_at=_now() + timedelta(seconds=settings.VERIFICATION_CODE_TTL_SECONDS)))
         await self.session.commit()
-        await get_sms_sender().send(phone, settings.SMS_CODE_TEMPLATE.format(code=code))
+        # Delivery happens after the response (see deliver_sms): waiting on the
+        # SMS gateway only when a record matched would reveal the match.
+        return OutgoingSms(phone, settings.SMS_CODE_TEMPLATE.format(code=code))
 
     async def _throttle(self, purpose: str, email: str, phone: str | None) -> None:
         limit = dict(limit=settings.VERIFICATION_SEND_MAX, window=settings.VERIFICATION_SEND_WINDOW_SECONDS)
@@ -142,17 +125,18 @@ class CustomerAccountLifecycle:
                 .join(ServiceCenter, ServiceCenter.id == Customer.service_center_id)
                 .where(Customer.is_active.is_(True), ServiceCenter.is_active.is_(True),
                        func.lower(Customer.email) == email,
-                       func.regexp_replace(Customer.phone, r"\D", "", "g").in_(_phone_variants(phone)),
+                       func.regexp_replace(Customer.phone, r"\D", "", "g").in_(phone_variants(phone)),
                        ~exists().where(CustomerAccount.customer_id == Customer.id))
                 .order_by(ServiceCenter.name, Customer.id))
 
-    async def start_signup(self, email: str, phone: str) -> None:
+    async def start_signup(self, email: str, phone: str) -> OutgoingSms | None:
         get_sms_sender()  # 503 up front when SMS is not configured
         email, phone = email.lower(), normalize_phone(phone)
         await self._throttle(SIGNUP, email, phone)
         taken = await self.session.scalar(select(CustomerAccount.id).where(CustomerAccount.email == email))
         if taken is None and (await self.session.execute(self._signup_matches(email, phone).limit(1))).first():
-            await self._send_code(SIGNUP, email, phone)
+            return await self._send_code(SIGNUP, email, phone)
+        return None
 
     async def complete_signup(self, email: str, phone: str, code: str, password: str,
                               service_center_id: uuid.UUID | None) -> dict:
@@ -183,22 +167,30 @@ class CustomerAccountLifecycle:
         return await CustomerAuthService(self.uow)._tokens(customer, account)  # commits
 
     # ── password reset / change ─────────────────────────────────────────────
-    async def _active_account(self, email: str):
-        return (await self.session.execute(
-            select(CustomerAccount, Customer)
-            .join(Customer, Customer.id == CustomerAccount.customer_id)
-            .where(CustomerAccount.email == email, CustomerAccount.is_active.is_(True),
-                   Customer.is_active.is_(True))
-            .with_for_update(of=CustomerAccount))).first()
+    async def _active_account(self, *, email: str | None = None, phone: str | None = None):
+        """The one active account for this email, or for this phone when exactly one exists."""
+        statement = (select(CustomerAccount, Customer)
+                     .join(Customer, Customer.id == CustomerAccount.customer_id)
+                     .where(CustomerAccount.is_active.is_(True), Customer.is_active.is_(True)))
+        if email is not None:
+            statement = statement.where(CustomerAccount.email == email.lower())
+        elif phone:
+            statement = statement.where(phone_matches(Customer.phone, phone))
+        else:
+            return None
+        rows = (await self.session.execute(statement.limit(2).with_for_update(of=CustomerAccount))).all()
+        # A phone shared by logins at two garages is ambiguous: the user resets by email.
+        return rows[0] if len(rows) == 1 else None
 
-    async def start_reset(self, email: str) -> None:
+    async def start_reset(self, *, email: str | None = None, phone: str | None = None) -> OutgoingSms | None:
         get_sms_sender()
-        email = email.lower()
-        await self._throttle(RESET, email, None)
-        found = await self._active_account(email)
-        phone = normalize_phone(found[1].phone) if found and found[1].phone else ""
-        if phone:
-            await self._send_code(RESET, email, phone)
+        key = email.lower() if email is not None else normalize_phone(phone)
+        await self._throttle(RESET, key, None)
+        found = await self._active_account(email=email, phone=phone)
+        sms_to = normalize_phone(found[1].phone) if found and found[1].phone else ""
+        if sms_to:
+            return await self._send_code(RESET, found[0].email, sms_to)
+        return None
 
     async def _set_password(self, account: CustomerAccount, password: str) -> None:
         account.password_hash = hash_password(password)
@@ -206,13 +198,13 @@ class CustomerAccountLifecycle:
         await AuthSessionService(self.session).revoke_principal(
             "customer", account.customer_id, customer_account_id=account.id)
 
-    async def complete_reset(self, email: str, code: str, password: str) -> None:
-        email = email.lower()
-        row = await self._check_code(RESET, email, code)
-        found = await self._active_account(email)
+    async def complete_reset(self, code: str, password: str, *, email: str | None = None,
+                             phone: str | None = None) -> None:
+        found = await self._active_account(email=email, phone=phone)
         if found is None:
             raise InvalidVerificationCode()
         account, customer = found
+        row = await self._check_code(RESET, account.email, code)
         await self._set_password(account, password)
         row.consumed_at = _now()
         self._audit(customer, "customer.account.password_reset")
@@ -221,8 +213,6 @@ class CustomerAccountLifecycle:
     async def change_password(self, customer: Customer, payload: dict,
                               current_password: str, new_password: str) -> dict:
         account = await self._token_account(payload)
-        if account is None:
-            raise PasswordLoginRequired()
         if not verify_password(current_password, account.password_hash):
             raise InvalidCredentials()
         await self._set_password(account, new_password)
@@ -231,23 +221,24 @@ class CustomerAccountLifecycle:
         # This device stays signed in with a fresh session; others are revoked.
         return await CustomerAuthService(self.uow)._tokens(customer, account)
 
-    async def _token_account(self, payload: dict) -> CustomerAccount | None:
-        if "account_id" not in payload:
-            return None
-        return await self.session.scalar(select(CustomerAccount).where(
+    async def _token_account(self, payload: dict) -> CustomerAccount:
+        # get_current_customer already validated the token against this account.
+        account = await self.session.scalar(select(CustomerAccount).where(
             CustomerAccount.id == uuid.UUID(payload["account_id"])).with_for_update())
+        if account is None:
+            raise InvalidCredentials()
+        return account
 
     # ── deletion ────────────────────────────────────────────────────────────
     async def delete_account(self, customer: Customer, payload: dict, password: str | None) -> None:
         account = await self._token_account(payload)
-        if account is not None and not (password and verify_password(password, account.password_hash)):
-            if not password:
-                burn_password_check("")
+        if not password or not verify_password(password, account.password_hash):
             raise InvalidCredentials()
         customer = await self.session.scalar(select(Customer).where(Customer.id == customer.id)
                                              .with_for_update().execution_options(populate_existing=True))
         await AuthSessionService(self.session).revoke_principal("customer", customer.id)
         await self.session.execute(delete(CustomerAccount).where(CustomerAccount.customer_id == customer.id))
+        await self.session.execute(delete(PushDevice).where(PushDevice.customer_id == customer.id))
         customer.full_name = "Deleted customer"
         customer.phone = customer.email = customer.address = customer.notes = None
         customer.telegram_id = customer.telegram_username = None

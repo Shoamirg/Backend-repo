@@ -6,6 +6,8 @@ from app.models.customer import Customer
 from app.models.customer_account import CustomerAccount
 from app.models.auth_session import AuthSession
 from app.models.verification_code import VerificationCode
+from app.models.push_device import PushDevice
+from app.models.stored_file import StoredFile
 from app.models.idempotency_record import IdempotencyRecord
 from app.models.brand import Brand
 from app.models.vehicle_model import VehicleModel
@@ -42,6 +44,8 @@ __all__ = [
     "CustomerAccount",
     "AuthSession",
     "VerificationCode",
+    "PushDevice",
+    "StoredFile",
     "IdempotencyRecord",
     "Brand",
     "VehicleModel",

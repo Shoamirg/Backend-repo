@@ -151,15 +151,8 @@ def probe():
     request('/invoices/' + other_id, staff, expected=404)
     request('/customer/history/invoices/' + other_id, customer, expected=404)
 
-    # Genuine Telegram sign-in, separate from the password customer's read-only
-    # principal. Neither auth dependencies nor normal FK/UoW are bypassed.
-    fields = {'auth_date': str(int(time.time())), 'user': json.dumps({
-        'id': identity('telegram-a').int % 10**12, 'first_name': 'Recovery QA',
-    })}
-    secret = hmac.new(b'WebAppData', os.environ['TELEGRAM_BOT_TOKEN'].encode(), hashlib.sha256).digest()
-    check = '\n'.join(f'{key}={fields[key]}' for key in sorted(fields))
-    fields['hash'] = hmac.new(secret, check.encode(), hashlib.sha256).hexdigest()
-    telegram = request('/customer/auth/telegram', body={'init_data': urlencode(fields)})['access_token']
+    # Customer replies go through the same mobile password session.
+    app_session = customer
     conversation_id = str(identity('conversation-a'))
     message_path = '/conversations/' + conversation_id + '/messages'
     customer_message_path = '/customer/messages/' + conversation_id
@@ -169,17 +162,17 @@ def probe():
     staff_key = {'Idempotency-Key': str(identity('staff-message-key-a'))}
     customer_key = {'Idempotency-Key': str(identity('customer-message-key-a'))}
     staff_message = request(message_path, staff, body=staff_payload, headers=staff_key, expected=201)
-    customer_message = request(customer_message_path, telegram, body={'body': 'Retained customer reply'}, headers=customer_key)
+    customer_message = request(customer_message_path, app_session, body={'body': 'Retained customer reply'}, headers=customer_key)
     assert request(message_path, staff, body=staff_payload, headers=staff_key, expected=201) == staff_message
-    assert request(customer_message_path, telegram, body={'body': 'Retained customer reply'}, headers=customer_key) == customer_message
+    assert request(customer_message_path, app_session, body={'body': 'Retained customer reply'}, headers=customer_key) == customer_message
     assert len(staff_message['attachments']) == 1 and customer_message['attachments'] == []
     request(message_path, staff, body={'body': 'Different material content'}, headers=staff_key, expected=409)
-    request(customer_message_path, telegram, body={'body': 'Different customer content'}, headers=customer_key, expected=409)
+    request(customer_message_path, app_session, body={'body': 'Different customer content'}, headers=customer_key, expected=409)
     request(message_path, staff, body=staff_payload, headers={'Idempotency-Key': ''}, expected=422)
-    request(customer_message_path, telegram, body={'body': 'Invalid key'}, headers={'Idempotency-Key': 'invalid'}, expected=422)
+    request(customer_message_path, app_session, body={'body': 'Invalid key'}, headers={'Idempotency-Key': 'invalid'}, expected=422)
     request('/conversations/' + str(identity('conversation-b')) + '/messages', staff,
             body=staff_payload, headers=staff_key, expected=404)
-    request('/customer/messages/' + str(identity('conversation-b')), telegram,
+    request('/customer/messages/' + str(identity('conversation-b')), app_session,
             body={'body': 'Retained customer reply'}, headers=customer_key, expected=404)
     request(customer_message_path, customer, body={'body': 'Password cannot replay'}, headers=customer_key, expected=403)
     request(customer_message_path, staff, body={'body': 'Staff is not customer'}, headers=customer_key, expected=401)

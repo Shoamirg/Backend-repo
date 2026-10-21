@@ -52,7 +52,7 @@ async def get_customer_uow(
 ) -> AsyncIterator[UnitOfWork]:
     """Tenant-bound access for every verified customer principal.
 
-    Mobile password accounts and Telegram sessions share one policy: per-row
+    Every customer session belongs to a password account; per-row
     ownership is enforced by the customer portal services, not by route lists.
     """
     async with UnitOfWork(service_center_id=current_customer.service_center_id) as uow:

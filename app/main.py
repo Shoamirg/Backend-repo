@@ -50,7 +50,9 @@ async def lifespan(app: FastAPI):
     try:
         yield
     finally:
-        # Release the connection pools cleanly on shutdown.
+        # Let in-flight push deliveries finish, then release the connection pools.
+        from app.services.push import drain
+        await drain()
         await close_rate_limiter()
         await engine.dispose()
         logger.info("Shutdown complete; database engine disposed")

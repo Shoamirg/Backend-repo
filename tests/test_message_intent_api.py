@@ -15,26 +15,20 @@ from app.core.database import async_session_factory
 from app.core.events import event_bus
 from app.models import Customer, MessageIntent
 from app.models.conversation import Attachment, Conversation, Message
-from tests.test_customer_portal import BOT, _init_data
+from tests.support.auth_sessions import persisted_pair
 from tests.test_staff_access_lifecycle import client, identity  # noqa: F401
 from tests.test_staff_management_api import owner  # noqa: F401
 
 
 @pytest_asyncio.fixture
 async def target(client, identity, owner, monkeypatch):
-    monkeypatch.setattr(settings, "TELEGRAM_BOT_TOKEN", BOT)
     customer = await client.post("/api/v1/customers", headers=owner, json={
         "full_name": "Private message-intent customer",
         "phone": "998" + str(uuid.uuid4().int)[:12],
     })
     assert customer.status_code == 201
-    telegram_id = uuid.uuid4().int % 10**12
-    async with async_session_factory() as session:
-        row = await session.get(Customer, uuid.UUID(customer.json()["id"]))
-        row.telegram_id = telegram_id
-        await session.commit()
-    signed = await client.post("/api/v1/customer/auth/telegram", json={"init_data": _init_data(telegram_id)})
-    assert signed.status_code == 200
+    signed = await persisted_pair({"sub": customer.json()["id"], "scid": str(identity["center"]),
+                                   "type": "customer_access"})
     thread = await client.post("/api/v1/conversations", headers=owner, json={
         "subject": "Private intent test", "customer_id": customer.json()["id"],
     })
@@ -42,7 +36,7 @@ async def target(client, identity, owner, monkeypatch):
     return {
         "id": thread.json()["id"], "customer_id": customer.json()["id"],
         "center": identity["center"], "staff_id": identity["user"], "staff": owner,
-        "customer": {"Authorization": "Bearer " + signed.json()["access_token"]},
+        "customer": {"Authorization": "Bearer " + signed["access_token"]},
     }
 
 
@@ -324,18 +318,17 @@ async def test_same_key_isolated_by_actor_namespace_actor_uuid_and_conversation(
     # Equal UUIDs in staff/customer tables still identify different actors.
     async with async_session_factory() as session:
         same_uuid = Customer(id=identity["user"], service_center_id=identity["center"],
-                             full_name="Equal UUID customer", telegram_id=uuid.uuid4().int % 10**12)
+                             full_name="Equal UUID customer")
         session.add(same_uuid)
         await session.commit()
-        telegram_id = same_uuid.telegram_id
-    signed = await client.post("/api/v1/customer/auth/telegram", json={"init_data": _init_data(telegram_id)})
-    assert signed.status_code == 200
+    signed = await persisted_pair({"sub": str(identity["user"]), "scid": str(identity["center"]),
+                                   "type": "customer_access"})
     thread = await client.post("/api/v1/conversations", headers=target["staff"], json={"customer_id": str(identity["user"])})
     assert thread.status_code == 201
     next_id = thread.json()["id"]
     one = await client.post(f"/api/v1/conversations/{next_id}/messages", headers=staff_headers, json={"body": "Same text"})
     two = await client.post(f"/api/v1/customer/messages/{next_id}", headers={
-        "Authorization": "Bearer " + signed.json()["access_token"], "Idempotency-Key": key,
+        "Authorization": "Bearer " + signed["access_token"], "Idempotency-Key": key,
     }, json={"body": "Same text"})
     assert one.status_code == 201 and two.status_code == 200
     assert len({original.json()["id"], one.json()["id"], two.json()["id"]}) == 3
@@ -422,9 +415,9 @@ async def foreign(client, target, identity):
         email = user.email
     try:
         records["staff_headers"] = await login(client, email)
-        signed = await client.post("/api/v1/customer/auth/telegram", json={"init_data": _init_data(records["telegram"])})
-        assert signed.status_code == 200
-        records["customer_headers"] = {"Authorization": "Bearer " + signed.json()["access_token"]}
+        signed = await persisted_pair({"sub": str(records["customer"]), "scid": str(records["center"]),
+                                       "type": "customer_access"})
+        records["customer_headers"] = {"Authorization": "Bearer " + signed["access_token"]}
         yield records
     finally:
         async with async_session_factory() as session:

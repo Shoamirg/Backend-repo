@@ -46,8 +46,6 @@ class Settings(BaseSettings):
     # Telegram
     TELEGRAM_BOT_TOKEN: Optional[str] = None
     TELEGRAM_WEBHOOK_URL: Optional[str] = None
-    DEV_AUTH_ENABLED: bool = False
-    TELEGRAM_PHONE_LINKING_ENABLED: bool = False
 
     # SMS delivery for mobile sign-up / password-reset codes. "disabled" makes
     # those endpoints answer 503; "console" logs codes (development/test only);
@@ -64,6 +62,18 @@ class Settings(BaseSettings):
     # Per phone/email: at most this many codes per window (independent of IP).
     VERIFICATION_SEND_MAX: int = 3
     VERIFICATION_SEND_WINDOW_SECONDS: int = 900
+
+    # Push notifications to the Expo mobile app. "disabled" sends nothing,
+    # "console" logs (development/test only), "expo" posts to the Expo Push API.
+    # EXPO_ACCESS_TOKEN is needed only if push security is enabled in Expo.
+    PUSH_PROVIDER: Literal["disabled", "console", "expo"] = "disabled"
+    EXPO_ACCESS_TOKEN: Optional[str] = None
+    EXPO_PUSH_URL: str = "https://exp.host/--/api/v2/push/send"
+
+    # Uploaded photos live on the server's disk. On the VPS point this at a
+    # persistent, backed-up directory (the Docker image uses /data/uploads).
+    UPLOAD_DIR: str = "uploads"
+    UPLOAD_MAX_BYTES: int = 10 * 1024 * 1024
 
     # Rate limiting (Redis-backed, fixed window). Production fails closed if Redis is down.
     RATE_LIMIT_ENABLED: bool = True
@@ -128,18 +138,10 @@ class Settings(BaseSettings):
         if (len(secret.encode("utf-8")) < 32 or len(set(secret)) < 2
                 or secret.lower().startswith(("change", "__change", "replace", "__replace"))):
             raise ValueError("SECRET_KEY must be a generated secret of at least 32 bytes, without a placeholder")
-        if self.DEV_AUTH_ENABLED or self.TELEGRAM_PHONE_LINKING_ENABLED:
-            raise ValueError("Development authentication and phone-based Telegram linking must be disabled in deployments")
         if self.DEMO_MODE_ENABLED:
             raise ValueError("DEMO_MODE_ENABLED must be false in staging and production")
         if not self.RATE_LIMIT_ENABLED:
             raise ValueError("RATE_LIMIT_ENABLED must be true in staging and production")
-        if self.SMS_PROVIDER == "console":
-            raise ValueError("SMS_PROVIDER=console logs codes and must not be used in staging and production")
-        if self.SMS_PROVIDER == "eskiz" and not (self.ESKIZ_EMAIL and self.ESKIZ_PASSWORD):
-            raise ValueError("SMS_PROVIDER=eskiz requires ESKIZ_EMAIL and ESKIZ_PASSWORD")
-        if "{code}" not in self.SMS_CODE_TEMPLATE:
-            raise ValueError("SMS_CODE_TEMPLATE must contain {code}")
         self._validate_dependency_url("DATABASE_URL", self.DATABASE_URL,
                                       {"postgres", "postgresql", "postgresql+asyncpg"})
         self._validate_dependency_url("REDIS_URL", self.REDIS_URL, {"redis", "rediss"})
@@ -158,6 +160,17 @@ class Settings(BaseSettings):
                 valid_origins = False
         if not valid_origins:
             raise ValueError("CORS_ORIGINS must contain explicit HTTPS origins without paths, credentials or wildcards")
+        # Mobile app integrations, checked after the core service settings.
+        if self.SMS_PROVIDER == "console":
+            raise ValueError("SMS_PROVIDER=console logs codes and must not be used in staging and production")
+        if self.SMS_PROVIDER == "eskiz" and not (self.ESKIZ_EMAIL and self.ESKIZ_PASSWORD):
+            raise ValueError("SMS_PROVIDER=eskiz requires ESKIZ_EMAIL and ESKIZ_PASSWORD")
+        if self.PUSH_PROVIDER == "console":
+            raise ValueError("PUSH_PROVIDER=console must not be used in staging and production")
+        if not Path(self.UPLOAD_DIR).is_absolute():
+            raise ValueError("UPLOAD_DIR must be an absolute path in staging and production")
+        if "{code}" not in self.SMS_CODE_TEMPLATE:
+            raise ValueError("SMS_CODE_TEMPLATE must contain {code}")
         return self
 
     @staticmethod

@@ -27,25 +27,8 @@ class TokenResponse(BaseModel):
     customer: CustomerSummary
 
 
-class TelegramSignInRequest(BaseModel):
-    """The raw ``initData`` string Telegram hands the Mini App on launch."""
-
-    init_data: str
-
-
-class LinkRequest(BaseModel):
-    init_data: str
-    phone: str
-
-
 class RefreshRequest(BaseModel):
     refresh_token: str
-
-
-class DevSignInRequest(BaseModel):
-    """DEBUG-only sign-in — optionally target a specific seeded customer."""
-
-    telegram_id: Optional[int] = None
 
 
 class GarageIdentity(BaseModel):
@@ -239,8 +222,21 @@ class ThreadResponse(BaseModel):
     messages: List[ThreadMessage] = []
 
 
+class PhotoRef(BaseModel):
+    """A photo uploaded first via POST /customer/files."""
+    file_id: uuid.UUID
+    label: Optional[str] = Field(default=None, max_length=200)
+
+
 class PostMessageRequest(BaseModel):
-    body: str
+    body: Optional[str] = Field(default=None, max_length=4000)
+    attachments: List[PhotoRef] = Field(default_factory=list, max_length=5)
+
+    @model_validator(mode="after")
+    def has_content(self):
+        if not (self.body and self.body.strip()) and not self.attachments:
+            raise ValueError("A message needs text or a photo")
+        return self
 
 
 # ── Roadside ────────────────────────────────────────────────────────────────
