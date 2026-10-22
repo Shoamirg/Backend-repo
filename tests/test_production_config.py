@@ -36,16 +36,15 @@ def test_deployment_rejects_missing_or_loopback_dependencies(field, value):
 
 
 def test_deployment_defaults_cannot_point_at_local_dependencies():
+    # Pin every other deployment setting: CI exports RATE_LIMIT_ENABLED=false
+    # for the suite, and the environment must not decide which check fires.
+    pinned = dict(_env_file=None, ENVIRONMENT="production", DEBUG=False, RATE_LIMIT_ENABLED=True,
+                  UPLOAD_DIR=VALID["UPLOAD_DIR"], SECRET_KEY=VALID["SECRET_KEY"],
+                  CORS_ORIGINS=VALID["CORS_ORIGINS"])
     with pytest.raises(ValidationError, match="DATABASE_URL"):
-        Settings(_env_file=None, ENVIRONMENT="production", DEBUG=False,
-                 SECRET_KEY=VALID["SECRET_KEY"],
-                 CORS_ORIGINS=VALID["CORS_ORIGINS"],
-                 REDIS_URL=VALID["REDIS_URL"])
+        Settings(**pinned, REDIS_URL=VALID["REDIS_URL"])
     with pytest.raises(ValidationError, match="REDIS_URL"):
-        Settings(_env_file=None, ENVIRONMENT="production", DEBUG=False,
-                 SECRET_KEY=VALID["SECRET_KEY"],
-                 CORS_ORIGINS=VALID["CORS_ORIGINS"],
-                 DATABASE_URL=VALID["DATABASE_URL"])
+        Settings(**pinned, DATABASE_URL=VALID["DATABASE_URL"])
 
 
 @pytest.mark.parametrize("secret", [
