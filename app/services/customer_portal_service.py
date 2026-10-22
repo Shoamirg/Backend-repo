@@ -60,6 +60,7 @@ from app.schemas.customer_portal import (
 from app.services.appointment_service import AppointmentService
 from app.services.case_service import CaseService
 from app.services.conversation_service import ConversationService
+from app.services.file_storage import customer_view_url
 from app.services.financial_service import FinancialService
 from app.services.invoice_service import InvoiceService
 from app.services.vehicle_health_service import VehicleHealthService
@@ -82,6 +83,7 @@ def _tier(score: float) -> str | None:
     if score >= 60:
         return "Bronze"
     return None
+
 
 
 class CustomerPortalService:
@@ -257,11 +259,11 @@ class CustomerPortalService:
     # ── billing (plain language, no payer scoring) ──────────────────────────
     async def billing(self) -> BillingResponse:
         summary = await FinancialService(self.uow).customer_summary(self.customer.id)
-        invoices = [self._doc(d) for d in summary["invoices"]]
+        # Drafts are staff work in progress: never shown to or actionable by customers.
+        invoices = [self._doc(d) for d in summary["invoices"] if d["status"] != InvoiceStatus.DRAFT]
         estimates = [
             self._doc(d) for d in summary["estimates"]
-            if d["status"] in (InvoiceStatus.SENT, InvoiceStatus.VIEWED,
-                               InvoiceStatus.DRAFT, InvoiceStatus.APPROVED)
+            if d["status"] in (InvoiceStatus.SENT, InvoiceStatus.VIEWED, InvoiceStatus.APPROVED)
         ]
         receipts = [
             BillingReceipt(id=p["id"], amount=p["amount"], method=p["method"],
@@ -298,7 +300,7 @@ class CustomerPortalService:
         est = await self._own_estimate(estimate_id)
         conv = await self._conversation_for_invoice(est)
         await ConversationService(self.uow).post_message(
-            uuid.UUID(conv["id"]), body=body, channel=Channel.TELEGRAM,
+            uuid.UUID(conv["id"]), body=body, channel=Channel.APP,
             author_role=ParticipantRole.CUSTOMER, author_name=self.customer.full_name,
         )
         return AskResponse(conversation_id=conv["id"])
@@ -310,6 +312,7 @@ class CustomerPortalService:
             or not inv.is_active
             or inv.customer_id != self.customer.id
             or inv.kind != InvoiceKind.ESTIMATE
+            or inv.status == InvoiceStatus.DRAFT
         ):
             raise NotFoundError("Estimate not found")
         return inv
@@ -373,14 +376,33 @@ class CustomerPortalService:
             messages=[self._thread_msg(m, atts.get(m.id, [])) for m in msgs],
         )
 
-    async def post_message(self, conversation_id: uuid.UUID, body: str, *, idempotency_key: uuid.UUID | None = None) -> ThreadMessage:
+    async def _own_photos(self, photos) -> list[dict]:
+        """Attachment payloads for photos this customer uploaded in this garage."""
+        from app.models.stored_file import StoredFile
+        from app.services.file_storage import staff_url
+        out = []
+        for photo in photos or []:
+            row = await self.session.scalar(select(StoredFile).where(
+                StoredFile.id == photo.file_id, StoredFile.service_center_id == self.customer.service_center_id,
+                StoredFile.customer_id == self.customer.id))
+            if row is None:
+                raise NotFoundError("Photo not found")
+            out.append({"kind": "photo", "label": photo.label or "Photo", "url": staff_url(row.id),
+                        "meta": {"file_id": str(row.id), "content_type": row.content_type,
+                                 "size": row.size_bytes}})
+        return out
+
+    async def post_message(self, conversation_id: uuid.UUID, body: str | None, *,
+                           attachments=None, idempotency_key: uuid.UUID | None = None) -> ThreadMessage:
         from app.services.message_intent import MessageSubmission
 
         conv = await self._own_conversation(conversation_id)
+        photos = await self._own_photos(attachments)
         msg = await ConversationService(self.uow).post_message(
             conv.id,
-            body=body,
-            channel=Channel.TELEGRAM,
+            body=body.strip() if body and body.strip() else None,
+            attachments=photos or None,
+            channel=Channel.APP,
             author_role=ParticipantRole.CUSTOMER,
             author_name=self.customer.full_name,
             kind=MessageKind.TEXT,
@@ -390,7 +412,8 @@ class CustomerPortalService:
         return ThreadMessage(
             id=msg["id"], from_me=True, author_name=msg["author_name"],
             body=msg["body"], created_at=msg["created_at"],
-            attachments=[ThreadAttachment(**{k: a.get(k) for k in ("id", "kind", "label", "url")})
+            attachments=[ThreadAttachment(id=a.get("id"), kind=a.get("kind"), label=a.get("label"),
+                                          url=customer_view_url(a.get("url")))
                          for a in msg.get("attachments", [])],
         )
 
@@ -440,7 +463,7 @@ class CustomerPortalService:
             case_type=CaseType.EMERGENCY,
             severity="high",
             description=req.description,
-            channel=Channel.TELEGRAM,
+            channel=Channel.APP,
             vehicle_id=vehicle.id if vehicle else None,
             location_text=req.location_text,
             location_lat=req.location_lat,
@@ -483,7 +506,7 @@ class CustomerPortalService:
                                url: str | None = None, meta: dict | None = None,
                                note: str | None = None) -> None:
         await ConversationService(self.uow).post_message(
-            conversation_id, body=note, channel=Channel.TELEGRAM,
+            conversation_id, body=note, channel=Channel.APP,
             author_role=ParticipantRole.CUSTOMER, author_name=self.customer.full_name,
             attachments=[{"kind": kind, "label": label, "url": url, "meta": meta}],
         )
@@ -540,7 +563,8 @@ class CustomerPortalService:
             author_name=m.author_name,
             body=m.body,
             created_at=m.created_at,
-            attachments=[ThreadAttachment(id=str(a.id), kind=a.kind, label=a.label, url=a.url)
+            attachments=[ThreadAttachment(id=str(a.id), kind=a.kind, label=a.label,
+                                          url=customer_view_url(a.url))
                          for a in attachments],
         )
 

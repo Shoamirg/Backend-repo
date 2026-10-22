@@ -61,6 +61,23 @@ Bir nechta origin vergul bilan ajratiladi. Production'da DEBUG va demo o'chirilg
 `0.0.0.0:$PORT`da eshitadi; local Docker uchun default `8000`.
 `WEB_CONCURRENCY=1` boshlang'ich qiymat. Uvicorn termination signalini oladi.
 
+### Mobil ilova: SMS kodlari
+
+Mijoz ro'yxatdan o'tishi va parolni tiklash Eskiz SMS kodi bilan ishlaydi.
+Eskiz akkaunti tayyor bo'lmaguncha `SMS_PROVIDER=disabled` qoldiring — bu
+endpointlar 503 qaytaradi, qolgan API ishlayveradi. Yoqish uchun
+`SMS_PROVIDER=eskiz`, `ESKIZ_EMAIL`, `ESKIZ_PASSWORD` (secret) va Eskiz
+kabinetida tasdiqlangan `SMS_CODE_TEMPLATE` (ichida `{code}`) kiriting.
+`console` provayderi deployda rad etiladi.
+
+### Mobil ilova: push va rasmlar
+
+Push xabarlar Expo orqali yuboriladi: `PUSH_PROVIDER=expo` (Expo loyihasida
+"Enhanced push security" yoqilgan bo'lsa `EXPO_ACCESS_TOKEN` ham kerak).
+Yuklangan rasmlar serverning diskida, `UPLOAD_DIR=/data/uploads` ichida saqlanadi.
+Railway'da shu yo'lga Volume ulang; VPS'da doimiy, backup qilinadigan papkani
+`/data/uploads`ga mount qiling. Volume bo'lmasa rasmlar har redeployda o'chadi.
+
 ## Tarmoq va qabul
 
 Backend **Networking → Generate Domain** orqali HTTPS manzil oladi. Railway

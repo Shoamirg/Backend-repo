@@ -752,6 +752,24 @@ class InvoiceService:
         data["timeline"] = await self._timeline(inv.id)
         return data
 
+    # Fields a holder of the unauthenticated share link may see. Everything else
+    # (customer contact details, staff notes, internal ids, payment references,
+    # the staff notification timeline) stays behind staff/customer auth.
+    _PUBLIC_FIELDS = (
+        "id", "code", "kind", "status", "currency", "tax_rate", "subtotal",
+        "discount_total", "tax_total", "total", "amount_paid", "balance",
+        "issued_at", "due_date", "approved_at", "paid_at", "created_at",
+        "is_overdue", "customer_name", "vehicle_label", "issuer", "line_items",
+    )
+    _PUBLIC_PAYMENT_FIELDS = ("kind", "method", "amount", "received_at")
+
+    async def get_public_document(self, invoice_id: uuid.UUID) -> dict:
+        data = await self.get_document(invoice_id)
+        public = {key: data[key] for key in self._PUBLIC_FIELDS if key in data}
+        public["payments"] = [{key: p[key] for key in self._PUBLIC_PAYMENT_FIELDS}
+                              for p in data["payments"]]
+        return public
+
     async def get_for_appointment(self, appointment_id: uuid.UUID) -> dict:
         appointment = (await self.session.execute(
             select(Appointment.id).where(
