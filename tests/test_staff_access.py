@@ -22,6 +22,10 @@ def test_manager_and_admin_have_financial_controls():
     assert not {p for p in staff_permissions(user("super_admin")) if p.startswith(("financial.", "billing."))}
 
 
+def test_platform_role_does_not_inherit_tenant_financial_controls():
+    assert set(staff_permissions(user("super_admin"))) == {"staff.read", "staff.write"}
+
+
 def test_mechanic_only_has_assigned_work_and_inactive_role_has_none():
     assert set(staff_permissions(user("mechanic"))) == {"work.read.assigned", "work.write.assigned"}
     assert staff_permissions(user("manager", active=False)) == []

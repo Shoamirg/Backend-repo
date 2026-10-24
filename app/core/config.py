@@ -46,6 +46,7 @@ class Settings(BaseSettings):
     # Telegram
     TELEGRAM_BOT_TOKEN: Optional[str] = None
     TELEGRAM_WEBHOOK_URL: Optional[str] = None
+    TELEGRAM_WEBHOOK_SECRET: Optional[str] = None
 
     # SMS delivery for mobile sign-up / password-reset codes. "disabled" makes
     # those endpoints answer 503; "console" logs codes (development/test only);
