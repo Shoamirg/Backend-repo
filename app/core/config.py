@@ -59,6 +59,9 @@ class Settings(BaseSettings):
     ESKIZ_BASE_URL: str = "https://notify.eskiz.uz/api"
     SMS_CODE_TEMPLATE: str = "GarageOS tasdiqlash kodi: {code}"
     VERIFICATION_CODE_TTL_SECONDS: int = 600
+    # Explicit opt-in for customer enrollment without a pre-existing garage record.
+    CUSTOMER_SELF_ENROLLMENT: bool = False
+    LOCAL_TEST_MODE: bool = False
     VERIFICATION_CODE_MAX_ATTEMPTS: int = 5
     # Per phone/email: at most this many codes per window (independent of IP).
     VERIFICATION_SEND_MAX: int = 3
@@ -135,6 +138,8 @@ class Settings(BaseSettings):
             return self
         if self.DEBUG:
             raise ValueError("DEBUG must be false in staging and production")
+        if self.LOCAL_TEST_MODE:
+            raise ValueError('LOCAL_TEST_MODE must be false in staging and production')
         secret = self.SECRET_KEY.strip()
         if (len(secret.encode("utf-8")) < 32 or len(set(secret)) < 2
                 or secret.lower().startswith(("change", "__change", "replace", "__replace"))):

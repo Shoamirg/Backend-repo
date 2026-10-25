@@ -48,12 +48,20 @@ class SignupStart(BaseModel):
 
 
 class SignupComplete(_NewPassword):
+    full_name: Optional[str] = Field(default=None, min_length=1, max_length=120)
     model_config = ConfigDict(extra='forbid')
     email: EmailStr = Field(max_length=255)
     phone: str = _PHONE
     code: str = _CODE
     password: str = _password_field()
     service_center_id: Optional[_uuid.UUID] = None
+
+
+class SignupVerify(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    email: EmailStr = Field(max_length=255)
+    phone: str = _PHONE
+    code: str = _CODE
 
 
 class _EmailOrPhone(BaseModel):

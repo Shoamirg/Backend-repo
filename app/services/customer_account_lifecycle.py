@@ -45,6 +45,12 @@ class InvalidVerificationCode(GarageException):
     detail = "The code is wrong or has expired. Request a new one."
 
 
+class CurrentPasswordInvalid(GarageException):
+    status_code = 401
+    code = 'CURRENT_PASSWORD_INVALID'
+    detail = 'The current password is incorrect.'
+
+
 class SignupProfileNotFound(GarageException):
     status_code = 404
     code = "SIGNUP_PROFILE_NOT_FOUND"
@@ -134,12 +140,29 @@ class CustomerAccountLifecycle:
         email, phone = email.lower(), normalize_phone(phone)
         await self._throttle(SIGNUP, email, phone)
         taken = await self.session.scalar(select(CustomerAccount.id).where(CustomerAccount.email == email))
-        if taken is None and (await self.session.execute(self._signup_matches(email, phone).limit(1))).first():
+        if taken is None and (settings.CUSTOMER_SELF_ENROLLMENT or
+                (await self.session.execute(self._signup_matches(email, phone).limit(1))).first()):
             return await self._send_code(SIGNUP, email, phone)
         return None
 
+    async def verify_signup(self, email: str, phone: str, code: str) -> dict:
+        email, phone = email.lower(), normalize_phone(phone)
+        row = await self._check_code(SIGNUP, email, code)
+        if row.phone != phone:
+            raise InvalidVerificationCode()
+        matches = (await self.session.execute(self._signup_matches(email, phone))).all()
+        garages = [{'id': str(c.service_center_id), 'name': name, 'address': ''}
+                   for c, name in matches]
+        if not garages and settings.CUSTOMER_SELF_ENROLLMENT:
+            centers = (await self.session.execute(select(ServiceCenter).where(
+                ServiceCenter.is_active.is_(True)).order_by(ServiceCenter.name))).scalars().all()
+            garages = [{'id': str(c.id), 'name': c.name, 'address': c.address or ''} for c in centers]
+        if not garages:
+            raise SignupProfileNotFound()
+        return {'garages': garages, 'needs_garage': len(garages) != 1}
+
     async def complete_signup(self, email: str, phone: str, code: str, password: str,
-                              service_center_id: uuid.UUID | None) -> dict:
+                              service_center_id: uuid.UUID | None, full_name: str | None = None) -> dict:
         email, phone = email.lower(), normalize_phone(phone)
         row = await self._check_code(SIGNUP, email, code)
         if row.phone != phone:
@@ -149,7 +172,27 @@ class CustomerAccountLifecycle:
             statement = statement.where(Customer.service_center_id == service_center_id)
         matches = (await self.session.execute(statement.with_for_update(of=Customer))).all()
         if not matches:
-            raise SignupProfileNotFound()
+            # A verified phone may enroll only through the explicit opt-in, and
+            # cannot select another garage to bypass an existing matching record.
+            existing = (await self.session.execute(self._signup_matches(email, phone).limit(1))).first()
+            center = await self.session.get(ServiceCenter, service_center_id) if service_center_id else None
+            if not settings.CUSTOMER_SELF_ENROLLMENT or existing or not center or not center.is_active:
+                raise SignupProfileNotFound()
+            if not full_name or not full_name.strip():
+                from app.exceptions import ValidationError
+                raise ValidationError('Full name is required for a new customer')
+            # Preserve existing customers: a phone match with different identity
+            # must be reconciled by the garage, never silently claimed.
+            duplicate = await self.session.scalar(select(Customer.id).where(
+                Customer.service_center_id == service_center_id, Customer.is_active.is_(True),
+                phone_matches(Customer.phone, phone)))
+            if duplicate:
+                raise AccountAlreadyExists()
+            customer = Customer(service_center_id=service_center_id, full_name=full_name.strip(),
+                                phone=phone, email=email)
+            self.session.add(customer)
+            await self.session.flush()
+            matches = [(customer, center.name)]
         if len(matches) > 1:
             raise GarageSelectionRequired([{"service_center_id": str(c.service_center_id), "name": name}
                                            for c, name in matches])
@@ -214,7 +257,7 @@ class CustomerAccountLifecycle:
                               current_password: str, new_password: str) -> dict:
         account = await self._token_account(payload)
         if not verify_password(current_password, account.password_hash):
-            raise InvalidCredentials()
+            raise CurrentPasswordInvalid()
         await self._set_password(account, new_password)
         self._audit(customer, "customer.account.password_change")
         await self.session.flush()
@@ -233,7 +276,7 @@ class CustomerAccountLifecycle:
     async def delete_account(self, customer: Customer, payload: dict, password: str | None) -> None:
         account = await self._token_account(payload)
         if not password or not verify_password(password, account.password_hash):
-            raise InvalidCredentials()
+            raise CurrentPasswordInvalid()
         customer = await self.session.scalar(select(Customer).where(Customer.id == customer.id)
                                              .with_for_update().execution_options(populate_existing=True))
         await AuthSessionService(self.session).revoke_principal("customer", customer.id)

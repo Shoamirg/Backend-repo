@@ -15,6 +15,11 @@ from app.api.v1.endpoints import platform
 
 api_router = APIRouter()
 
+from app.core.config import settings
+if settings.LOCAL_TEST_MODE and settings.ENVIRONMENT == 'development':
+    from app.api.local_test import router as local_test_router
+    api_router.include_router(local_test_router, prefix='/local-test', tags=['local-test'])
+
 api_router.include_router(auth.router, prefix="/auth", tags=["auth"])
 api_router.include_router(staff.router, prefix="/staff", tags=["staff"])
 api_router.include_router(mechanics.router, prefix="/mechanics", tags=["mechanics"])

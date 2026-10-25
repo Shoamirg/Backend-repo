@@ -150,7 +150,22 @@ class CustomerPortalService:
     # ── home (action-first) ─────────────────────────────────────────────────
     async def home(self) -> HomeResponse:
         center = await self.session.get(ServiceCenter, self.customer.service_center_id)
+        pending_estimate_id = await self.session.scalar(select(Invoice.id).where(
+            Invoice.service_center_id == self.customer.service_center_id,
+            Invoice.customer_id == self.customer.id, Invoice.is_active.is_(True),
+            Invoice.kind == InvoiceKind.ESTIMATE,
+            Invoice.status.in_([InvoiceStatus.SENT, InvoiceStatus.VIEWED]),
+        ).order_by(Invoice.created_at.desc()).limit(1))
+        active = await self.session.scalar(select(OperationalCase).where(
+            OperationalCase.service_center_id == self.customer.service_center_id,
+            OperationalCase.customer_id == self.customer.id, OperationalCase.is_active.is_(True),
+            OperationalCase.case_type == CaseType.EMERGENCY,
+            OperationalCase.status.notin_([CaseStatus.RESOLVED, CaseStatus.CLOSED]),
+        ).order_by(OperationalCase.created_at.desc()).limit(1))
         return HomeResponse(
+            pending_estimate=(await InvoiceService(self.uow).get_public_document(pending_estimate_id)
+                if pending_estimate_id else None),
+            active_roadside=(await self.roadside_status(active.id)).model_dump(mode='json') if active else None,
             greeting=self.customer.full_name.split()[0] if self.customer.full_name else "there",
             garage=self._garage(center),
             sos_available=True,
@@ -543,7 +558,7 @@ class CustomerPortalService:
             .limit(limit)
         )).scalars().all()
         return [
-            ActivityItem(title=n.title, detail=n.body, category=n.category,
+            ActivityItem(id=str(n.id), title=n.title, detail=n.body, category=n.category,
                          severity=n.severity, date=n.created_at)
             for n in rows
         ]
@@ -591,6 +606,8 @@ class CustomerPortalService:
             severity=case.severity, created_at=case.created_at,
             vehicle_id=str(case.vehicle_id) if case.vehicle_id else None,
             conversation_id=conversation_id, steps=steps,
+            location_text=case.location_text, location_lat=case.location_lat,
+            location_lng=case.location_lng, problem=case.description,
         )
 
     @staticmethod
@@ -617,6 +634,7 @@ class CustomerPortalService:
         if center is None:
             return GarageIdentity(id="", name="GarageOS")
         return GarageIdentity(
+            timezone=center.timezone,
             id=str(center.id),
             name=center.brand_name or center.name,
             tagline=center.tagline,

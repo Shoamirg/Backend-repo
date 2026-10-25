@@ -32,6 +32,7 @@ class RefreshRequest(BaseModel):
 
 
 class GarageIdentity(BaseModel):
+    timezone: str = 'UTC'
     id: str
     name: str
     tagline: Optional[str] = None
@@ -51,6 +52,7 @@ class MeResponse(BaseModel):
 
 # ── Activity (shared by Home + Messages) ────────────────────────────────────
 class ActivityItem(BaseModel):
+    id: Optional[str] = None
     title: str
     detail: Optional[str] = None
     category: Optional[str] = None
@@ -93,6 +95,8 @@ class HomeVehicle(BaseModel):
 
 
 class HomeResponse(BaseModel):
+    pending_estimate: Optional[dict] = None
+    active_roadside: Optional[dict] = None
     balance_currency: str = "USD"
     balances_by_currency: dict[str, float] = Field(default_factory=dict)
     greeting: str
@@ -284,3 +288,8 @@ class RoadsideCase(BaseModel):
     vehicle_id: Optional[str] = None
     conversation_id: Optional[str] = None
     steps: List[RoadsideStatusStep] = []
+    location_text: Optional[str] = None
+    location_lat: Optional[float] = None
+    location_lng: Optional[float] = None
+    problem: Optional[str] = None
+    assigned_name: Optional[str] = None

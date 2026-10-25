@@ -23,9 +23,19 @@ from app.services.customer_auth_service import CustomerAuthService
 from app.services.sms import deliver_sms
 
 router = APIRouter()
+account_rate_limit = rate_limit(limit=30, window=60, scope="customer-account")
+
+
+from app.schemas.customer_account import SignupVerify
+
+
+@router.post('/signup/verify', dependencies=[Depends(account_rate_limit)],
+             summary='Verify SMS ownership and return eligible garages')
+async def signup_verify(body: SignupVerify,
+                        auth: CustomerAuthService = Depends(get_customer_auth_service)):
+    return await CustomerAccountLifecycle(auth.uow).verify_signup(str(body.email), body.phone, body.code)
 
 # Per-IP ceiling sized for carrier NAT; per-phone/email limits live in the service.
-account_rate_limit = rate_limit(limit=30, window=60, scope="customer-account")
 
 
 @router.post("/login", response_model=TokenResponse, dependencies=[Depends(auth_rate_limit)],
@@ -75,7 +85,7 @@ async def signup_start(body: SignupStart, background: BackgroundTasks,
 async def signup_complete(body: SignupComplete,
                           auth: CustomerAuthService = Depends(get_customer_auth_service)):
     return await CustomerAccountLifecycle(auth.uow).complete_signup(
-        str(body.email), body.phone, body.code, body.password, body.service_center_id)
+        str(body.email), body.phone, body.code, body.password, body.service_center_id, body.full_name)
 
 
 @router.post("/password/reset/start", status_code=202, response_model=CodeSent,

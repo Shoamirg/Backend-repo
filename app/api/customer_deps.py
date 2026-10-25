@@ -56,4 +56,5 @@ async def get_customer_uow(
     ownership is enforced by the customer portal services, not by route lists.
     """
     async with UnitOfWork(service_center_id=current_customer.service_center_id) as uow:
+        uow.actor_customer_id = current_customer.id
         yield uow
