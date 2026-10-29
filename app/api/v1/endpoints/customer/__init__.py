@@ -17,6 +17,7 @@ from app.api.v1.endpoints.customer import (
     messages,
     roadside,
     vehicles,
+    workshops,
 )
 
 router = APIRouter()
@@ -29,6 +30,7 @@ router.include_router(appointments.router, prefix="/appointments", tags=["custom
 router.include_router(billing.router, prefix="/billing", tags=["customer"])
 router.include_router(messages.router, prefix="/messages", tags=["customer"])
 router.include_router(roadside.router, prefix="/roadside", tags=["customer"])
+router.include_router(workshops.router, prefix="/workshops", tags=["customer"])
 router.include_router(files.router, prefix="/files", tags=["customer"])
 router.include_router(devices.router, prefix="/devices", tags=["customer"])
 
